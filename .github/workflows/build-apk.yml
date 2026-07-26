@@ -11,108 +11,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # AGP 8.7 (shipped with Flutter 3.32) requires JDK 17.
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # Flutter 3.32.0 templates ship Kotlin 2.1.0 / AGP 8.7.3 / Gradle 8.12.
-      # Flutter 3.24.0 shipped Kotlin 1.7.10, which cannot read the Kotlin 1.9
-      # metadata inside sqflite / url_launcher / cached_network_image. That
-      # version gap was the entire cause of the compileReleaseKotlin failure.
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.32.0'
           channel: 'stable'
 
-      - name: Show toolchain versions
+      - name: Show versions
         run: |
           flutter --version
           java -version
 
-      - name: Create Flutter skeleton
+      - name: Create skeleton
         run: flutter create --org com.dukoow --project-name kdrama_tracker --platforms=android skeleton_app
 
-      - name: Copy source files into skeleton
+      - name: Copy sources
         run: |
           cp -r lib/* skeleton_app/lib/
           cp pubspec.yaml skeleton_app/pubspec.yaml
 
-      - name: Show generated Gradle config
+      - name: Patch manifest
         run: |
-          echo "=== android/ contents ==="
-          ls -la skeleton_app/android/
-          for f in skeleton_app/android/settings.gradle skeleton_app/android/settings.gradle.kts; do
-            if [ -f "$f" ]; then
-              echo "=== $f ==="
-              cat "$f"
-            fi
-          done
-
-      - name: Patch AndroidManifest (INTERNET permission + url_launcher queries)
-        run: |
-          python3 - <<'PYEOF'
-          path = "skeleton_app/android/app/src/main/AndroidManifest.xml"
-          with open(path) as f:
-              content = f.read()
-
-          # 1. INTERNET permission.
-          #    Flutter puts this ONLY in the debug/profile manifests, never in the
-          #    main one. Without it a RELEASE apk has no network access at all --
-          #    TMDb, the news feed, poster images and Google Fonts would all fail
-          #    silently on a build that otherwise looks completely successful.
-          perm = '    <uses-permission android:name="android.permission.INTERNET"/>\n'
-          if "android.permission.INTERNET" in content:
-              print("INTERNET permission already present")
-          else:
-              idx = content.index(">", content.index("<manifest")) + 1
-              content = content[:idx] + "\n" + perm + content[idx:]
-              print("INTERNET permission added")
-
-          # 2. Package-visibility queries for url_launcher (Android 11+).
-          #    Flutter's template already ships a <queries> block for PROCESS_TEXT,
-          #    and Android allows only one <queries> element per manifest file, so
-          #    insert into the existing block instead of appending a second one.
-          intent = (
-              '        <intent>\n'
-              '            <action android:name="android.intent.action.VIEW" />\n'
-              '            <data android:scheme="https" />\n'
-              '        </intent>\n'
-          )
-          if "android.intent.action.VIEW" in content:
-              print("VIEW intent already present")
-          elif "<queries>" in content:
-              content = content.replace("<queries>", "<queries>\n" + intent.rstrip("\n"), 1)
-              print("VIEW intent inserted into existing <queries> block")
-          else:
-              block = "    <queries>\n" + intent + "    </queries>\n"
-              content = content.replace("</manifest>", block + "</manifest>")
-              print("new <queries> block added")
-
-          with open(path, "w") as f:
-              f.write(content)
-
-          print("=== AndroidManifest.xml ===")
-          print(content)
-          PYEOF
+          M=skeleton_app/android/app/src/main/AndroidManifest.xml
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.INTERNET"/>' $M
+          sed -i '/<queries>/a\        <intent>\n            <action android:name="android.intent.action.VIEW" />\n            <data android:scheme="https" />\n        </intent>' $M
+          cat $M
 
       - name: Get dependencies
         working-directory: skeleton_app
         run: flutter pub get
 
-      - name: Analyze Dart sources
+      - name: Analyze
         working-directory: skeleton_app
         continue-on-error: true
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
-      - name: Build split APKs
+      - name: Build APKs
         working-directory: skeleton_app
         run: flutter build apk --release --split-per-abi
 
-      - name: List built APKs
+      - name: List APKs
         run: ls -lh skeleton_app/build/app/outputs/flutter-apk/
 
       - name: Upload APKs
@@ -121,27 +65,3 @@ jobs:
           name: kdrama-tracker-apk
           path: skeleton_app/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
-
-               - name: Get dependencies
-        working-directory: skeleton_app
-        run: flutter pub get
-
-      - name: Analyze Dart sources
-        working-directory: skeleton_app
-        continue-on-error: true
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-
-      - name: Build split APKs
-        working-directory: skeleton_app
-        run: flutter build apk --release --split-per-abi
-
-      - name: List built APKs
-        run: ls -lh skeleton_app/build/app/outputs/flutter-apk/
-
-      - name: Upload APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: kdrama-tracker-apk
-          path: skeleton_app/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
-
