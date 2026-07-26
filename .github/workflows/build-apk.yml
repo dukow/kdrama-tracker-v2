@@ -1,0 +1,63 @@
+name: Build KDrama Tracker APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 8.7 (shipped with Flutter 3.32) requires JDK 17.
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Flutter 3.32.0 templates ship Kotlin 2.1.0 / AGP 8.7.3 / Gradle 8.12.
+      # Flutter 3.24.0 shipped Kotlin 1.7.10, which cannot read the Kotlin 1.9
+      # metadata inside sqflite / url_launcher / cached_network_image. That
+      # version gap was the entire cause of the compileReleaseKotlin failure.
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.0'
+          channel: 'stable'
+
+      - name: Show toolchain versions
+        run: |
+          flutter --version
+          java -version
+
+      - name: Create Flutter skeleton
+        run: flutter create --org com.dukoow --project-name kdrama_tracker --platforms=android skeleton_app
+
+      - name: Copy source files into skeleton
+        run: |
+          cp -r lib/* skeleton_app/lib/
+          cp pubspec.yaml skeleton_app/pubspec.yaml
+
+      - name: Show generated Gradle config
+        run: |
+          echo "=== android/ contents ==="
+          ls -la skeleton_app/android/
+          for f in skeleton_app/android/settings.gradle skeleton_app/android/settings.gradle.kts; do
+            if [ -f "$f" ]; then
+              echo "=== $f ==="
+              cat "$f"
+            fi
+          done
+
+      - name: Patch AndroidManifest (INTERNET permission + url_launcher queries)
+        run: |
+          python3 - <<'PYEOF'
+          path = "skeleton_app/android/app/src/main/AndroidManifest.xml"
+          with open(path) as f:
+              content = f.read()
+
+          # 1. INTERNET permission.
+          #    Flutter puts this ONLY i
