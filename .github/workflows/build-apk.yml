@@ -60,4 +60,88 @@ jobs:
               content = f.read()
 
           # 1. INTERNET permission.
-          #    Flutter puts this ONLY i
+          #    Flutter puts this ONLY in the debug/profile manifests, never in the
+          #    main one. Without it a RELEASE apk has no network access at all --
+          #    TMDb, the news feed, poster images and Google Fonts would all fail
+          #    silently on a build that otherwise looks completely successful.
+          perm = '    <uses-permission android:name="android.permission.INTERNET"/>\n'
+          if "android.permission.INTERNET" in content:
+              print("INTERNET permission already present")
+          else:
+              idx = content.index(">", content.index("<manifest")) + 1
+              content = content[:idx] + "\n" + perm + content[idx:]
+              print("INTERNET permission added")
+
+          # 2. Package-visibility queries for url_launcher (Android 11+).
+          #    Flutter's template already ships a <queries> block for PROCESS_TEXT,
+          #    and Android allows only one <queries> element per manifest file, so
+          #    insert into the existing block instead of appending a second one.
+          intent = (
+              '        <intent>\n'
+              '            <action android:name="android.intent.action.VIEW" />\n'
+              '            <data android:scheme="https" />\n'
+              '        </intent>\n'
+          )
+          if "android.intent.action.VIEW" in content:
+              print("VIEW intent already present")
+          elif "<queries>" in content:
+              content = content.replace("<queries>", "<queries>\n" + intent.rstrip("\n"), 1)
+              print("VIEW intent inserted into existing <queries> block")
+          else:
+              block = "    <queries>\n" + intent + "    </queries>\n"
+              content = content.replace("</manifest>", block + "</manifest>")
+              print("new <queries> block added")
+
+          with open(path, "w") as f:
+              f.write(content)
+
+          print("=== AndroidManifest.xml ===")
+          print(content)
+          PYEOF
+
+      - name: Get dependencies
+        working-directory: skeleton_app
+        run: flutter pub get
+
+      - name: Analyze Dart sources
+        working-directory: skeleton_app
+        continue-on-error: true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build split APKs
+        working-directory: skeleton_app
+        run: flutter build apk --release --split-per-abi
+
+      - name: List built APKs
+        run: ls -lh skeleton_app/build/app/outputs/flutter-apk/
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdrama-tracker-apk
+          path: skeleton_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
+               - name: Get dependencies
+        working-directory: skeleton_app
+        run: flutter pub get
+
+      - name: Analyze Dart sources
+        working-directory: skeleton_app
+        continue-on-error: true
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Build split APKs
+        working-directory: skeleton_app
+        run: flutter build apk --release --split-per-abi
+
+      - name: List built APKs
+        run: ls -lh skeleton_app/build/app/outputs/flutter-apk/
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdrama-tracker-apk
+          path: skeleton_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+
